@@ -1,0 +1,14 @@
+format = "v1"
+
+[metadata]
+desc = "RT-Thread for WCH CH582F EVB"
+vendor = { name = "WCH", eula = "" }
+
+[blob]
+distfiles = []
+
+[provisionable]
+strategy = "dd-v1"
+
+[provisionable.partition_map]
+disk = "placeholder" 

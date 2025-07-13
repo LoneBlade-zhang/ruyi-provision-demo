@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { readAllDevices, readDeviceVariants, readImageCombos } from '../utils/tomlParser';
 
 const WELCOME_MESSAGE = `RuyiSDK Device Provisioning Wizard
@@ -28,7 +28,7 @@ const STATES = {
   DISK_PATH: 'disk_path',
   FLASHING: 'flashing',
   COMPLETE: 'complete',
-  RESTART: 'restart'  // 添加重启状态
+  RESTART: 'restart'
 };
 
 export default function useProvisionWizard() {
@@ -40,10 +40,33 @@ export default function useProvisionWizard() {
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [selectedSystem, setSelectedSystem] = useState(null);
   const [downloadProgress, setDownloadProgress] = useState(null);
+  const [devices, setDevices] = useState([]);
+  const [variants, setVariants] = useState([]);
+  const [systems, setSystems] = useState([]);
 
   const addToHistory = useCallback((text, type = 'output') => {
     setHistory(prev => [...prev, { type, text }]);
   }, []);
+
+  // Load devices when entering device selection state
+  useEffect(() => {
+    if (state === STATES.DEVICE_SELECT) {
+      readAllDevices()
+        .then(deviceList => {
+          setDevices(deviceList);
+          addToHistory('\nThe following devices are currently supported by the wizard. Please pick your device:');
+          deviceList.forEach((device, index) => {
+            addToHistory(`  ${index + 1}. ${device.displayName}`);
+          });
+          addToHistory(`\nChoice? (1-${deviceList.length})`);
+        })
+        .catch(err => {
+          console.error('Failed to load devices:', err);
+          setError('Failed to load device list. Please try again.');
+          setState(STATES.RESTART);
+        });
+    }
+  }, [state, addToHistory]);
 
   const simulateDownload = useCallback(() => {
     setDownloadProgress(0);
@@ -106,20 +129,16 @@ Please give the path for the target's whole disk:`);
       case STATES.WELCOME:
         if (value.toLowerCase() === 'y') {
           setState(STATES.DEVICE_SELECT);
-          addToHistory('\nThe following devices are currently supported by the wizard. Please pick your device:');
-          addToHistory('  1. Allwinner D1 Developer Board');
-          addToHistory('\nChoice? (1-1)');
         } else if (value.toLowerCase() === 'n') {
           addToHistory('\nExiting. You can restart the wizard whenever prepared.\n');
-          setState(STATES.RESTART);  // 设置为重启状态
+          setState(STATES.RESTART);
         } else {
           addToHistory("Unrecognized input '" + value + "'.");
           addToHistory("Accepted choices: Y/y/yes for YES, N/n/no for NO.");
         }
         break;
 
-      case STATES.RESTART:  // 处理重启状态
-        // 清除历史记录并重新开始
+      case STATES.RESTART:
         setHistory([{ type: 'output', text: WELCOME_MESSAGE }]);
         setState(STATES.WELCOME);
         setSelectedDevice(null);
@@ -127,42 +146,74 @@ Please give the path for the target's whole disk:`);
         setSelectedSystem(null);
         setDownloadProgress(null);
         setError(null);
+        setDevices([]);
+        setVariants([]);
+        setSystems([]);
         break;
 
       case STATES.DEVICE_SELECT:
-        if (value === '1') {
-          setSelectedDevice('Allwinner D1 Developer Board');
+        const deviceChoice = parseInt(value);
+        if (deviceChoice >= 1 && deviceChoice <= devices.length) {
+          const device = devices[deviceChoice - 1];
+          setSelectedDevice(device);
           setState(STATES.VARIANT_SELECT);
-          addToHistory('\nThe device has the following variants. Please choose the one corresponding to your hardware at hand:');
-          addToHistory('  1. Allwinner D1 Developer Board (generic)');
-          addToHistory('\nChoice? (1-1)');
+          readDeviceVariants(device.id)
+            .then(variantList => {
+              setVariants(variantList);
+              addToHistory('\nThe device has the following variants. Please choose the one corresponding to your hardware at hand:');
+              variantList.forEach((variant, index) => {
+                addToHistory(`  ${index + 1}. ${device.displayName} (${variant.variantName})`);
+              });
+              addToHistory(`\nChoice? (1-${variantList.length})`);
+            })
+            .catch(err => {
+              console.error('Failed to load variants:', err);
+              setError('Failed to load device variants. Please try again.');
+              setState(STATES.RESTART);
+            });
         } else {
-          addToHistory("Invalid choice. Please enter a number between 1 and 1.");
+          addToHistory(`Invalid choice. Please enter a number between 1 and ${devices.length}.`);
         }
         break;
 
       case STATES.VARIANT_SELECT:
-        if (value === '1') {
-          setSelectedVariant('generic');
+        const variantChoice = parseInt(value);
+        if (variantChoice >= 1 && variantChoice <= variants.length) {
+          const variant = variants[variantChoice - 1];
+          setSelectedVariant(variant);
           setState(STATES.SYSTEM_SELECT);
-          addToHistory('\nThe following system configurations are supported by the device variant you have chosen. Please pick the one you want to put on the device:');
-          addToHistory('  1. openEuler RISC-V (XFCE) for Allwinner D1');
-          addToHistory('  2. openEuler RISC-V (base system) for Allwinner D1');
-          addToHistory('\nChoice? (1-2)');
+          readImageCombos(selectedDevice.id, variant.id)
+            .then(systemList => {
+              setSystems(systemList);
+              addToHistory('\nThe following system configurations are supported by the device variant you have chosen. Please pick the one you want to put on the device:');
+              systemList.forEach((system, index) => {
+                addToHistory(`  ${index + 1}. ${system.displayName}`);
+              });
+              addToHistory(`\nChoice? (1-${systemList.length})`);
+            })
+            .catch(err => {
+              console.error('Failed to load system configurations:', err);
+              setError('Failed to load system configurations. Please try again.');
+              setState(STATES.RESTART);
+            });
         } else {
-          addToHistory("Invalid choice. Please enter a number between 1 and 1.");
+          addToHistory(`Invalid choice. Please enter a number between 1 and ${variants.length}.`);
         }
         break;
 
       case STATES.SYSTEM_SELECT:
-        if (value === '1' || value === '2') {
-          setSelectedSystem(value === '1' ? 'XFCE' : 'base system');
+        const systemChoice = parseInt(value);
+        if (systemChoice >= 1 && systemChoice <= systems.length) {
+          const system = systems[systemChoice - 1];
+          setSelectedSystem(system);
           setState(STATES.CONFIRM_DOWNLOAD);
           addToHistory('\nWe are about to download and install the following packages for your device:');
-          addToHistory(' * board-image/oerv-awol-d1-xfce');
+          system.packageAtoms.forEach(pkg => {
+            addToHistory(` * ${pkg}`);
+          });
           addToHistory('\nProceed? (y/N)');
         } else {
-          addToHistory("Invalid choice. Please enter a number between 1 and 2.");
+          addToHistory(`Invalid choice. Please enter a number between 1 and ${systems.length}.`);
         }
         break;
 
@@ -172,7 +223,7 @@ Please give the path for the target's whole disk:`);
           simulateDownload();
         } else if (value.toLowerCase() === 'n') {
           addToHistory('\nExiting. You can restart the wizard whenever prepared.\n');
-          setState(STATES.RESTART);  // 设置为重启状态
+          setState(STATES.RESTART);
         } else {
           addToHistory("Unrecognized input '" + value + "'.");
           addToHistory("Accepted choices: Y/y/yes for YES, N/n/no for NO.");
@@ -198,6 +249,7 @@ Please give the path for the target's whole disk:`);
           setSelectedSystem(null);
           setDownloadProgress(null);
           setError(null);
+          setDevices([]);
         } else if (value.toLowerCase() === 'n') {
           addToHistory('\nThank you for using RuyiSDK Device Provisioning Wizard!\n');
         } else {
@@ -209,7 +261,7 @@ Please give the path for the target's whole disk:`);
       default:
         break;
     }
-  }, [state, input, addToHistory, simulateDownload, simulateFlashing]);
+  }, [state, input, addToHistory, simulateDownload, simulateFlashing, devices, variants, systems, selectedDevice]);
 
   return {
     history,
